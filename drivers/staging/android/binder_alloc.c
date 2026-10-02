@@ -966,16 +966,16 @@ enum lru_status binder_alloc_free_page(struct list_head *item,
 
 err_down_write_mmap_sem_failed:
 	/*
-	 * Upstream defers this with mmput_async() because we are in shrinker
-	 * (reclaim) context. 3.18 has no mmput_async() - adding it means
-	 * splitting __mmput() out of mmput() and growing mm_struct in core mm,
-	 * which is not worth the risk in a vendor kernel. The success path of
-	 * this very function already calls mmput() synchronously a few lines
-	 * above, and neither path holds mmap_sem at this point, so use the
-	 * synchronous form here too. This branch is only reached when the
-	 * down_write_trylock() failed, i.e. rarely.
+	 * mmput() can sleep and the list walk holds its spinlock here.
+	 * The acquired mm reference survives releasing alloc->mutex.
+	 * Do not touch page/alloc after dropping either lock: another
+	 * thread may free the item. Restart the invalidated list walk.
 	 */
+	mutex_unlock(&alloc->mutex);
+	spin_unlock(lock);
 	mmput(mm);
+	spin_lock(lock);
+	return LRU_RETRY;
 err_mmget:
 err_page_already_freed:
 	mutex_unlock(&alloc->mutex);
